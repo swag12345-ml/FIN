@@ -8,17 +8,10 @@ import re
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_groq import ChatGroq
-from langchain.chains import ConversationalRetrievalChain
 
 # ---------------- CONFIG ---------------- #
 st.set_page_config(page_title="AI Financial Analyzer", layout="wide")
-
-# Initialize LLM
-llm = ChatGroq(
-    model="llama3-70b-8192",
-    groq_api_key=st.secrets["GROQ_API_KEY"]
-)
+st.title("💰 AI Financial Statement Analyzer")
 
 # ---------------- PDF TEXT EXTRACTION ---------------- #
 def extract_text_from_pdf(pdf):
@@ -55,26 +48,21 @@ def categorize(desc):
         return "Bills"
     return "Others"
 
-# ---------------- UI ---------------- #
-st.title("💰 AI Financial Statement Analyzer")
-
+# ---------------- FILE UPLOAD ---------------- #
 uploaded_file = st.file_uploader("Upload Bank Statement PDF", type=["pdf"])
 
 if uploaded_file:
     raw_text = extract_text_from_pdf(uploaded_file)
 
-    # Extract and categorize transactions
+    # ---------------- TRANSACTION DATAFRAME ---------------- #
     df = extract_transactions(raw_text)
     df["Category"] = df["Description"].apply(categorize)
-
     st.subheader("📄 Extracted Transactions")
     st.dataframe(df)
 
     # ---------------- VISUAL INSIGHTS ---------------- #
     st.subheader("📊 Spending Insights")
     expense_df = df[df["Amount"] < 0]
-
-    # Ensure numeric and non-empty before plotting
     category_summary = expense_df.groupby("Category")["Amount"].sum().abs()
     category_summary = pd.to_numeric(category_summary, errors='coerce').dropna()
 
@@ -87,38 +75,24 @@ if uploaded_file:
     else:
         st.info("No numeric expense data available for plotting.")
 
-    # ---------------- AI INSIGHT PREVIEW ---------------- #
-    st.subheader("🤖 AI Spending Analysis")
-    summary_text = f"Here is the spending data by category:\n{category_summary.to_dict()}"
-    ai_prompt = """
-    Analyze the user's spending habits.
-    Tell where they spend the most and least.
-    Give 3 improvement tips.
-    """
-    ai_response = llm.invoke(ai_prompt + summary_text)
-    st.write(ai_response.content)
-
-    # ---------------- RAG CHATBOT ---------------- #
+    # ---------------- SIMPLE RAG QA (WITHOUT LLM) ---------------- #
     st.subheader("💬 Ask Questions About Your Statement")
+
+    # Split text into chunks
     splitter = CharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     chunks = splitter.split_text(raw_text)
 
+    # Create vector store
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectorstore = FAISS.from_texts(chunks, embeddings)
-
-    qa_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever()
-    )
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
     query = st.text_input("Ask a question")
     if query:
-        result = qa_chain({
-            "question": query,
-            "chat_history": st.session_state.chat_history
-        })
-        st.session_state.chat_history.append((query, result["answer"]))
-        st.write("🤖", result["answer"])
+        # Simple similarity search
+        results = vectorstore.similarity_search(query, k=3)
+        answer = "\n---\n".join(results)
+        st.session_state.chat_history.append((query, answer))
+        st.write("🤖", answer)
