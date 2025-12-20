@@ -1,167 +1,126 @@
-import streamlit as st  # must be first
-import os
-import json
-import torch
-import asyncio
-import numpy as np
-from dotenv import load_dotenv
-
-# PDF + OCR
+import streamlit as st
 import fitz  # PyMuPDF
-import easyocr
-from pdf2image import convert_from_path
+import pandas as pd
+import matplotlib.pyplot as plt
+import re
+import json
 
-# LangChain (LATEST)
-from langchain_text_splitters import CharacterTextSplitter
-
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-
+from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.chains import ConversationalRetrievalChain
 from langchain_groq import ChatGroq
 
-# ------------------------------------------------------------------
+# ---------------- CONFIG ---------------- #
+st.set_page_config(page_title="AI Financial Analyzer", layout="wide")
 
-st.set_page_config(page_title="Chat with Swag AI", page_icon="📝", layout="centered")
-load_dotenv()
-
-working_dir = os.path.dirname(os.path.abspath(__file__))
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-torch.backends.cudnn.benchmark = True
-
-# ------------------------------------------------------------------
-# GROQ KEY
-def load_groq_api_key():
-    try:
-        with open(os.path.join(working_dir, "config.json"), "r") as f:
-            return json.load(f).get("GROQ_API_KEY")
-    except FileNotFoundError:
-        st.error("🚨 config.json not found.")
-        st.stop()
-
-groq_api_key = load_groq_api_key()
-if not groq_api_key:
-    st.error("🚨 GROQ_API_KEY missing.")
-    st.stop()
-
-# ------------------------------------------------------------------
-# OCR
-reader = easyocr.Reader(["en"], gpu=torch.cuda.is_available())
-
-def extract_text_from_pdf(file_path):
-    try:
-        doc = fitz.open(file_path)
-        texts = [page.get_text() for page in doc if page.get_text().strip()]
-        doc.close()
-        return texts if texts else extract_text_from_images(file_path)
-    except Exception as e:
-        st.error(e)
-        return []
-
-def extract_text_from_images(pdf_path):
-    try:
-        images = convert_from_path(pdf_path, dpi=150, first_page=1, last_page=5)
-        return ["\n".join(reader.readtext(np.array(img), detail=0)) for img in images]
-    except Exception as e:
-        st.error(e)
-        return []
-
-# ------------------------------------------------------------------
-# VECTOR STORE
-def setup_vectorstore(documents):
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-
-    if DEVICE == "cuda":
-        embeddings.client = embeddings.client.to("cuda")
-
-    splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-    chunks = splitter.split_text("\n".join(documents))
-
-    return FAISS.from_texts(chunks, embeddings)
-
-# ------------------------------------------------------------------
-# CHAIN (MEMORY + RETRIEVAL ENABLED)
-def create_chain(vectorstore):
-    if "memory" not in st.session_state:
-        st.session_state.memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-
-    llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
-        temperature=0,
-        groq_api_key=groq_api_key
-    )
-
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-
-    return ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=st.session_state.memory,
-        chain_type="stuff",
-        verbose=False
-    )
-
-# ------------------------------------------------------------------
-# UI
-st.title("🦙 Chat with Swag AI (Groq + Memory + RAG)")
-
-uploaded_files = st.file_uploader(
-    "Upload PDFs",
-    type=["pdf"],
-    accept_multiple_files=True
+llm = ChatGroq(
+    model="llama3-70b-8192",
+    groq_api_key=st.secrets["GROQ_API_KEY"]
 )
 
-if uploaded_files:
-    all_text = []
+# ---------------- PDF TEXT EXTRACTION ---------------- #
+def extract_text_from_pdf(pdf):
+    doc = fitz.open(stream=pdf.read(), filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
 
-    for file in uploaded_files:
-        path = os.path.join(working_dir, file.name)
-        with open(path, "wb") as f:
-            f.write(file.getbuffer())
+# ---------------- TRANSACTION PARSER ---------------- #
+def extract_transactions(text):
+    lines = text.split("\n")
+    data = []
 
-        text = extract_text_from_pdf(path)
-        all_text.extend(text)
-        st.success(f"✅ {file.name} processed")
+    for line in lines:
+        match = re.search(r"(\d{2}/\d{2}/\d{4}).*?(-?\d+\.\d{2})", line)
+        if match:
+            date = match.group(1)
+            amount = float(match.group(2))
+            description = line
+            data.append([date, description, amount])
 
-    if all_text:
-        st.session_state.vectorstore = setup_vectorstore(all_text)
-        st.session_state.conversation_chain = create_chain(
-            st.session_state.vectorstore
-        )
+    df = pd.DataFrame(data, columns=["Date", "Description", "Amount"])
+    return df
 
-# ------------------------------------------------------------------
-# CHAT HISTORY DISPLAY
-if "memory" in st.session_state:
-    for msg in st.session_state.memory.chat_memory.messages:
-        with st.chat_message("user" if msg.type == "human" else "assistant"):
-            st.markdown(msg.content)
+# ---------------- CATEGORY CLASSIFIER ---------------- #
+def categorize(desc):
+    desc = desc.lower()
+    if "amazon" in desc or "flipkart" in desc:
+        return "Shopping"
+    if "uber" in desc or "ola" in desc:
+        return "Travel"
+    if "zomato" in desc or "swiggy" in desc:
+        return "Food"
+    if "rent" in desc or "electricity" in desc:
+        return "Bills"
+    return "Others"
 
-# ------------------------------------------------------------------
-# CHAT INPUT
-user_input = st.chat_input("Ask your PDFs...")
+# ---------------- UI ---------------- #
+st.title("💰 AI Financial Statement Analyzer")
 
-async def get_response(question):
-    result = await asyncio.to_thread(
-        st.session_state.conversation_chain.invoke,
-        {"question": question}
+uploaded_file = st.file_uploader("Upload Bank Statement PDF", type=["pdf"])
+
+if uploaded_file:
+    raw_text = extract_text_from_pdf(uploaded_file)
+
+    df = extract_transactions(raw_text)
+    df["Category"] = df["Description"].apply(categorize)
+
+    st.subheader("📄 Extracted Transactions")
+    st.dataframe(df)
+
+    # ---------------- VISUAL INSIGHTS ---------------- #
+    st.subheader("📊 Spending Insights")
+
+    expense_df = df[df["Amount"] < 0]
+    category_summary = expense_df.groupby("Category")["Amount"].sum().abs()
+
+    fig, ax = plt.subplots()
+    category_summary.plot(kind="bar", ax=ax)
+    st.pyplot(fig)
+
+    # ---------------- AI INSIGHT PREVIEW ---------------- #
+    st.subheader("🤖 AI Spending Analysis")
+
+    summary_text = f"""
+    Here is the spending data by category:
+    {category_summary.to_dict()}
+    """
+
+    ai_prompt = f"""
+    Analyze the user's spending habits.
+    Tell where they spend the most and least.
+    Give 3 improvement tips.
+    """
+
+    ai_response = llm.invoke(ai_prompt + summary_text)
+    st.write(ai_response.content)
+
+    # ---------------- RAG CHATBOT ---------------- #
+    st.subheader("💬 Ask Questions About Your Statement")
+
+    splitter = CharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = splitter.split_text(raw_text)
+
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectorstore = FAISS.from_texts(chunks, embeddings)
+
+    qa_chain = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=vectorstore.as_retriever()
     )
-    return result["answer"]
 
-if user_input:
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-    try:
-        answer = asyncio.run(get_response(user_input))
-    except Exception as e:
-        answer = str(e)
+    query = st.text_input("Ask a question")
 
-    with st.chat_message("assistant"):
-        st.markdown(answer)
+    if query:
+        result = qa_chain({
+            "question": query,
+            "chat_history": st.session_state.chat_history
+        })
+
+        st.session_state.chat_history.append((query, result["answer"]))
+        st.write("🤖", result["answer"])
