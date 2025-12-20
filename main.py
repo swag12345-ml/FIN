@@ -1,17 +1,20 @@
+# ---------------- IMPORTS ---------------- #
 import streamlit as st
 import fitz  # PyMuPDF
 import pandas as pd
 import matplotlib.pyplot as plt
 import re
-import json
 
-from langchain_text_splitters import CharacterTextSplitter 
-from langchain_community.vectorstores import FAISS 
-from langchain_community.embeddings import HuggingFaceEmbeddings 
-from langchain_groq import ChatGroq  
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
+from langchain.chains import ConversationalRetrievalChain
+
 # ---------------- CONFIG ---------------- #
 st.set_page_config(page_title="AI Financial Analyzer", layout="wide")
 
+# Initialize LLM
 llm = ChatGroq(
     model="llama3-70b-8192",
     groq_api_key=st.secrets["GROQ_API_KEY"]
@@ -29,7 +32,6 @@ def extract_text_from_pdf(pdf):
 def extract_transactions(text):
     lines = text.split("\n")
     data = []
-
     for line in lines:
         match = re.search(r"(\d{2}/\d{2}/\d{4}).*?(-?\d+\.\d{2})", line)
         if match:
@@ -37,7 +39,6 @@ def extract_transactions(text):
             amount = float(match.group(2))
             description = line
             data.append([date, description, amount])
-
     df = pd.DataFrame(data, columns=["Date", "Description", "Amount"])
     return df
 
@@ -62,6 +63,7 @@ uploaded_file = st.file_uploader("Upload Bank Statement PDF", type=["pdf"])
 if uploaded_file:
     raw_text = extract_text_from_pdf(uploaded_file)
 
+    # Extract and categorize transactions
     df = extract_transactions(raw_text)
     df["Category"] = df["Description"].apply(categorize)
 
@@ -70,34 +72,34 @@ if uploaded_file:
 
     # ---------------- VISUAL INSIGHTS ---------------- #
     st.subheader("📊 Spending Insights")
-
     expense_df = df[df["Amount"] < 0]
-    category_summary = expense_df.groupby("Category")["Amount"].sum().abs()
 
-    fig, ax = plt.subplots()
-    category_summary.plot(kind="bar", ax=ax)
-    st.pyplot(fig)
+    # Ensure numeric and non-empty before plotting
+    category_summary = expense_df.groupby("Category")["Amount"].sum().abs()
+    category_summary = pd.to_numeric(category_summary, errors='coerce').dropna()
+
+    if not category_summary.empty:
+        fig, ax = plt.subplots()
+        category_summary.plot(kind="bar", ax=ax, color="skyblue")
+        ax.set_ylabel("Amount Spent")
+        ax.set_title("Spending by Category")
+        st.pyplot(fig)
+    else:
+        st.info("No numeric expense data available for plotting.")
 
     # ---------------- AI INSIGHT PREVIEW ---------------- #
     st.subheader("🤖 AI Spending Analysis")
-
-    summary_text = f"""
-    Here is the spending data by category:
-    {category_summary.to_dict()}
-    """
-
-    ai_prompt = f"""
+    summary_text = f"Here is the spending data by category:\n{category_summary.to_dict()}"
+    ai_prompt = """
     Analyze the user's spending habits.
     Tell where they spend the most and least.
     Give 3 improvement tips.
     """
-
     ai_response = llm.invoke(ai_prompt + summary_text)
     st.write(ai_response.content)
 
     # ---------------- RAG CHATBOT ---------------- #
     st.subheader("💬 Ask Questions About Your Statement")
-
     splitter = CharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     chunks = splitter.split_text(raw_text)
 
@@ -113,12 +115,10 @@ if uploaded_file:
         st.session_state.chat_history = []
 
     query = st.text_input("Ask a question")
-
     if query:
         result = qa_chain({
             "question": query,
             "chat_history": st.session_state.chat_history
         })
-
         st.session_state.chat_history.append((query, result["answer"]))
         st.write("🤖", result["answer"])
