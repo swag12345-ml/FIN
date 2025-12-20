@@ -1,15 +1,33 @@
 streamlit
+streamlit-autorefresh
+streamlit-pdf-viewer
 torch
-python-dotenv
-pymupdf  # PyMuPDF
-easyocr
+beautifulsoup4
+streamlit-option-menu
+numpy
+pillow
+dnspython
+
+matplotlib
+pytz
+pdfkit
 pdf2image
+pymupdf
+plotly
+python-docx
+pytesseract
+nltk
+easyocr
+bcrypt
+python-dotenv
+tabulate
+
+# LangChain ecosystem
 langchain
+langchain-core
 langchain-community
 langchain-huggingface
 langchain-groq
+sentence-transformers
 faiss-cpu
-numpy
-pillow
-sentence-transformers  # Required for HuggingFaceEmbeddings
-pytesseract
+xhtml2pdf
