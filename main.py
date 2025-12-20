@@ -11,6 +11,7 @@ from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS 
 from langchain_community.embeddings import HuggingFaceEmbeddings 
 from langchain_groq import ChatGroq  # optional if you're using it
+ # optional if you're using it
 import numpy as np
 
 # Set Streamlit Page Config
