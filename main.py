@@ -5,12 +5,10 @@ import matplotlib.pyplot as plt
 import re
 import json
 
-from langchain.text_splitter import CharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import ConversationalRetrievalChain
-from langchain_groq import ChatGroq
-
+from langchain_text_splitters import CharacterTextSplitter 
+from langchain_community.vectorstores import FAISS 
+from langchain_community.embeddings import HuggingFaceEmbeddings 
+from langchain_groq import ChatGroq  
 # ---------------- CONFIG ---------------- #
 st.set_page_config(page_title="AI Financial Analyzer", layout="wide")
 
