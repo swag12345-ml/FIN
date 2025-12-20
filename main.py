@@ -12,7 +12,8 @@ import easyocr
 from pdf2image import convert_from_path
 
 # LangChain (LATEST)
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter
+
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
