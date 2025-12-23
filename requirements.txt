@@ -1,4 +1,9 @@
 streamlit
+pandas
+plotly
+groq
+pypdf
+streamlit
 streamlit-autorefresh
 streamlit-pdf-viewer
 torch
@@ -7,7 +12,8 @@ streamlit-option-menu
 numpy
 pillow
 dnspython
-
+yfinance
+feedparser
 matplotlib
 pytz
 pdfkit
